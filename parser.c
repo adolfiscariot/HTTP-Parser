@@ -9,7 +9,9 @@
  * instead of allocating any strings to memory. As such the structs below
  * have a length field for each header value e.g. char *path, size_t path_len
  *
- * This parser is heavily influenced by this paper: Finite State Machine Parsing for Internet Protocols: Faster Than You Think (https://ieeexplore.ieee.org/document/6957302)
+ * This parser is heavily influenced by this paper: 
+ * Finite State Machine Parsing for Internet Protocols: Faster Than You Think 
+ * https://ieeexplore.ieee.org/document/6957302 (Link to above paper)
  */
 
 #if (defined (__GNUC__) && __GNUC__ >= 7) || (defined(__clang__) && __clang_major__ >= 10)
