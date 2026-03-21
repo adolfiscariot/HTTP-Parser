@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include "parser.h"
 
 #define PARSE_SUCCESS 0
 #define PARSE_ERROR 1
