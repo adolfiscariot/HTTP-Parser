@@ -165,7 +165,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 						// Handle chunked encoding
 						if (parser->flags & F_CHUNKED){
 							state = CHUNK_SIZE;
-							//i--;
+							i--; //Gotta do this cause the main loop increments i by the time we get to chunk size
 							break;
 						}
 
@@ -244,7 +244,6 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 							// Check if value is chunked
 							if (header->value_len == strlen("chunked") && strncasecmp(header->value, "chunked", strlen("chunked")) == 0){
 								parser->flags |= F_CHUNKED;
-								printf("Transfer Encoding Time!\n");
 							}
 						}
 						request->header_count++;
@@ -279,8 +278,8 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 		 * =======================================================================
 		 */
 			case CHUNK_SIZE:
-				printf("chunk size\n");
-				if (parser->chunk_bytes_read == 0){
+
+				if (parser->state != CHUNK_SIZE){
 					parser->chunk_size = 0;
 				}
 
@@ -293,35 +292,35 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				} else{
 					int value = unhex[(unsigned char)c];
 					if (value == -1){
-						state = CHUNK_ERROR;
+						state = ERROR;
 						break;
 					}
+
 					parser->chunk_size = (parser->chunk_size << 4) | value;
-					//state = CHUNK_SIZE_CR;
+					state = CHUNK_SIZE_CR;
+					i++;
 					break;
 				}
 
 			case CHUNK_EXTENSIONS:
-				printf("chunk extensions\n");
 				if (c == '\r'){
 					state = CHUNK_SIZE_CR;
 				} else{
 					//ignore extensions. let the characters be skipped.
 				}
+
 				break;
 
 			case CHUNK_SIZE_CR:
-				printf("chunk size cr\n");
 				if (c == '\n'){
 					state = CHUNK_SIZE_LF;
-					break;
+					FALLTHROUGH;
 				} else{
-					state = CHUNK_ERROR;
+					state = ERROR;
+					break;
 				}
 
 			case CHUNK_SIZE_LF:
-				printf("chunk size lf\n");
-				printf("cunk size: %zu\n", parser->chunk_size);
 
 				parser->chunk_bytes_read = 0;
 
@@ -333,7 +332,6 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				break;
 
 			case CHUNK_DATA:
-				printf("chunk data\n");
 
 				if (parser->chunk_bytes_read == 0){
 					parser->chunk_data = &buf[i];
@@ -342,14 +340,12 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				parser->chunk_bytes_read++;
 				if (parser->chunk_bytes_read == parser->chunk_size){
 					state = CHUNK_DATA_CR;
+					//continue;
 				}
 
-				printf("chunk size: %zu\n", parser->chunk_size);
-				fwrite(parser->chunk_data, 1, parser->chunk_size, stdout);
 				break;
 
 			case CHUNK_DATA_CR:
-				printf("chunk data cr\n");
 				if (c != '\r'){
 					state = ERROR;
 					break;
@@ -357,11 +353,8 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 
 				state = CHUNK_DATA_LF;
 				break;
-				//FALLTHROUGH;
 
 			case CHUNK_DATA_LF:
-				printf("chunk data lf\n");
-				printf("%c\n", buf[i]);
 				if (c != '\n'){
 					state = ERROR;
 					break;
@@ -371,21 +364,23 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				break;
 
 			case CHUNK_TRAILERS:
-				if (c == '\n'){
-					state = CHUNK_DONE;
+				if (c == '\r'){
+					state = CHUNK_TRAILERS_LF;
 				} else{
 					//ignore trailers. let the characters be skipped.
 				}
+
 				break;
 
-			case CHUNK_DONE:
-				printf("chunk done\n");
+			case CHUNK_TRAILERS_LF:
+				if (c != '\n'){
+					state = ERROR;
+					break;
+				}
+
 				state = DONE;
 				break;
-			case CHUNK_ERROR:
-				state = ERROR;
-				break;
-			
+
 			case ERROR:
 				parser->position = buf_total;
 				parser->state = state;

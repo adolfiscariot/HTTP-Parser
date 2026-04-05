@@ -9,26 +9,25 @@
 #define PARSE_INCOMPLETE 2
 
 typedef enum{
-	METHOD          ,
-	PATH            ,
-	VERSION         ,
-	CR              ,
-	LF              ,
-	HEADER_KEY      ,
-	HEADER_VALUE    ,
-	BODY            ,
-	CHUNK_SIZE      ,                  // Always in hex
-	CHUNK_EXTENSIONS,            // Always ignore extensions
-	CHUNK_SIZE_CR   ,
-	CHUNK_SIZE_LF   ,       
-	CHUNK_DATA      ,
-	CHUNK_DATA_CR   ,
-	CHUNK_DATA_LF   ,
-	CHUNK_TRAILERS  ,              // Always ignore trailers
-	CHUNK_DONE      ,
-	CHUNK_ERROR     ,
-	DONE            ,
-	ERROR           ,
+	METHOD             ,
+	PATH               ,
+	VERSION            ,
+	CR                 ,
+	LF                 ,
+	HEADER_KEY         ,
+	HEADER_VALUE       ,
+	BODY               ,
+	CHUNK_SIZE         ,             // Always in hex
+	CHUNK_EXTENSIONS   ,            // Always ignore extensions
+	CHUNK_SIZE_CR      ,
+	CHUNK_SIZE_LF      ,        
+	CHUNK_DATA         ,
+	CHUNK_DATA_CR      ,
+	CHUNK_DATA_LF      ,
+	CHUNK_TRAILERS     ,           // Always ignore trailers
+	CHUNK_TRAILERS_LF  ,              
+	DONE               ,
+	ERROR              ,
 }Parser_State;
 
 typedef enum{               // You can use 0x01, 0x02 or 1 << 0, 1 << 1. Same difference.
