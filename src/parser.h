@@ -4,18 +4,38 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define PARSE_SUCCESS 0
+#define PARSE_ERROR 1
+#define PARSE_INCOMPLETE 2
+
 typedef enum{
-	METHOD,
-	PATH,
-	VERSION,
-	CR,
-	LF,
-	HEADER_KEY,
-	HEADER_VALUE,
-	BODY,
-	DONE,
-	ERROR
+	METHOD          ,
+	PATH            ,
+	VERSION         ,
+	CR              ,
+	LF              ,
+	HEADER_KEY      ,
+	HEADER_VALUE    ,
+	BODY            ,
+	CHUNK_SIZE      ,                  // Always in hex
+	CHUNK_EXTENSIONS,            // Always ignore extensions
+	CHUNK_SIZE_CR   ,
+	CHUNK_SIZE_LF   ,       
+	CHUNK_DATA      ,
+	CHUNK_DATA_CR   ,
+	CHUNK_DATA_LF   ,
+	CHUNK_TRAILERS  ,              // Always ignore trailers
+	CHUNK_DONE      ,
+	CHUNK_ERROR     ,
+	DONE            ,
+	ERROR           ,
 }Parser_State;
+
+typedef enum{               // You can use 0x01, 0x02 or 1 << 0, 1 << 1. Same difference.
+	F_CHUNKED           = 0x01,
+	F_KEEP_ALIVE        = 0x02,
+	F_CONTENT_LENGTH    = 0x04
+}flags;
 
 typedef struct{
 	Parser_State state;
@@ -35,6 +55,11 @@ typedef struct{
 	long body_len; // expected content-length
 	long body_bytes_read;
 
+	uint8_t flags; // values from Parser_Flags
+       
+	size_t chunk_size;
+	const char *chunk_data;
+	size_t chunk_bytes_read;
 }Parser;
 
 typedef struct{
@@ -66,9 +91,35 @@ typedef struct{ //Ordered from largest to smallest for better cache alignment
 
 } HttpRequest;
 
-int parse_http_request(HttpRequest *request,
-			Parser *parser, 
-			const char *buf, 
-			size_t buf_total);
+int parse_http_request(
+		HttpRequest *request,
+		Parser *parser, 
+		const char *buf, 
+		size_t buf_total
+		);
 
 #endif
+
+/*
+ *          CHUNKED FINITE STATE MACHINE
+ *          ============================
+ * 
+ * size -> if ';' or ' ' then ext else if '\r' then size cr
+ * ext -> if '\r' then size cr
+ * size cr -> if '\n' then size lf
+ * size lf -> if size > 0 then data else trailers
+ * data -> if 'r\' then data cr
+ * data cr -> if '\n' then data lf
+ * data lf -> size
+ * trailers -> if '\r\n\r\n' then done
+ *                                    
+ *    ____________                _____________________________________         
+ *   |            |              |                                     |
+ *   |            v              |                                     v
+ * SIZE -> EXT -> SIZE CR -> SIZE LF -> DATA -> DATA CR -> DATA LF  TRAILERS -> DONE
+ *   ^                                                       |
+ *   |_______________________________________________________|
+ *
+ *
+ */
+

@@ -26,71 +26,6 @@
 #include <stdlib.h>
 #include "parser.h"
 
-#define PARSE_SUCCESS 0
-#define PARSE_ERROR 1
-#define PARSE_INCOMPLETE 2
-
-typedef enum{
-	METHOD,
-	PATH,
-	VERSION,
-	CR,
-	LF,
-	HEADER_KEY,
-	HEADER_VALUE,
-	BODY,
-	DONE,
-	ERROR
-}Parser_State;
-
-typedef struct{
-	Parser_State state;
-	size_t position;
-	
-	const char *method_start;
-	size_t method_len;
-
-	const char *path_start;
-	size_t path_len;
-
-	const char *version_start;
-	size_t version_len;
-
-	const char *line_start; // simplifies parsing CRLF delimited lines
-
-	long body_len; // expected content-length
-	long body_bytes_read;
-}Parser;
-
-typedef struct{
-	const char *key;
-	size_t key_len;
-
-	const char *value;
-	size_t value_len;
-}Header;
-
-typedef struct{ //Ordered from largest to smallest for better cache alignment 
-	Header headers[20]; // Host: localhost:4040, Keep-alive: yes
-	uint8_t header_count; 
-
-	const char *method; //GET, POST, etc
-	size_t method_len;
-
-	const char *path; // /info.html 
-	size_t path_len;
-
-	const char *query_string; // ?pageNo=5 
-	size_t query_len;
-
-	const char *protocol; // HTTP/1.1 
-	size_t protocol_len;
-
-	const char *body; // Used in POST, PUT methods e.g form submissions 
-	size_t body_len;
-
-} HttpRequest;
-
 /*
  * We will use a switch statement due to: 
  *
@@ -112,6 +47,27 @@ typedef struct{ //Ordered from largest to smallest for better cache alignment
  * states for each input to only 8 (A-Z, a-z, 0-9, ':',, '-', ' ', '\r', '\n') but that
  * would be extra work that switch statements avoid.
  */
+
+// The lookup table below is used to convert size in chunked encoding from hex to their numeric values
+static const int8_t unhex[256] = {
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x00-0x0F
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x10-0x1F
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x20-0x2F
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,  // 0x30-0x3F ('0'-'9')
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x40-0x4F ('A'-'F')
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x50-0x5F
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x60-0x6F ('a'-'f')
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x70-0x7F
+    // Rest (0x80-0xFF) all -1
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+};
 
 int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, size_t buf_total){ 
 	Parser_State state = parser->state;
@@ -182,12 +138,10 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				}
 
 			case CR:
-				printf("CR: c='%c' (%d) at position (%zu\n", c, c, i);
 				if (c == '\n'){
 					state = LF;
 					i++;
 					c = buf[i];
-					printf("CR: Moving to LF, new c = '%c' (%d) at pos %zu\n", c, c, i);
 					FALLTHROUGH;
 				} else{
 					state = ERROR;
@@ -202,12 +156,19 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 			 * it must be an error
 			 */
 			case LF:
-				printf("LF: c='%c' (%d)\n", c, c);
 				if (c == '\r'){
 					// if CR re-appears after LF that means the body is next
 					i++; // skip to \n
 					if (i < buf_total && buf[i] == '\n'){
 						i++; //skip to beginning of body
+
+						// Handle chunked encoding
+						if (parser->flags & F_CHUNKED){
+							state = CHUNK_SIZE;
+							//i--;
+							break;
+						}
+
 						if (parser->body_len > 0){
 							state = BODY;
 							request->body = &buf[i];
@@ -220,7 +181,6 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 						}
 					}
 				} else if (c >= 'A' && c <= 'Z'){
-					printf("Starting new header at position %zu\n", i);
 					if (request->header_count >= 20){
 						state = ERROR;
 						break;
@@ -265,18 +225,26 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				{
 					Header *header = &request->headers[request->header_count];
 					if (c == '\r'){
-						printf("Header: %.*s = %.*s\n", (int)header->key_len, header->key, (int)header->value_len, header->value);
 						/* 
 						 * check if this value belongs to 'Content-Length' and
 						 * set parser->body_len to this value if it does
 						 */
 						if (header->key_len == strlen("Content-Length") && strncasecmp(header->key, "Content-Length", strlen("Content-Length")) == 0){
 							parser->body_len = 0;
-							for (size_t j = 0;j < header->value_len; j++){
+							for (size_t j = 0; j < header->value_len; j++){
 								char digit = header->value[j];
 								if (digit >= '0' && digit <= '9'){
 									parser->body_len = parser->body_len * 10 + (digit - '0');
 								}
+							}
+						}
+
+						// If header == Transfer-Encoding ...
+						else if (header->key_len == strlen("Transfer-Encoding") && strncasecmp(header->key, "Transfer-Encoding", strlen("Transfer-Encoding")) == 0){
+							// Check if value is chunked
+							if (header->value_len == strlen("chunked") && strncasecmp(header->value, "chunked", strlen("chunked")) == 0){
+								parser->flags |= F_CHUNKED;
+								printf("Transfer Encoding Time!\n");
 							}
 						}
 						request->header_count++;
@@ -292,13 +260,10 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 			case BODY:
 				{
 					size_t left_in_buf = buf_total - i;
-					printf("left_in_buf = buf_total (%zu) - i (%zu) = %zu\n", buf_total, i, left_in_buf);
 
 					size_t left_to_read = parser->body_len - parser->body_bytes_read;
-					printf("parser->body_len = %zu, parser->body_bytes_read = %zu\n", parser->body_len , parser->body_bytes_read);
 
 					size_t bytes_to_read = (left_in_buf >= left_to_read)? left_in_buf : left_to_read;
-					printf("bytes_to_read = %zu\n", bytes_to_read); 
 
 					parser->body_bytes_read += bytes_to_read;
 					i += bytes_to_read - 1; // -1 since we add 1 in the loop
@@ -307,6 +272,119 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 					}
 					break;
 				}
+
+		/*
+		 * =======================================================================
+		 * CHUNKED ENCODING CASES
+		 * =======================================================================
+		 */
+			case CHUNK_SIZE:
+				printf("chunk size\n");
+				if (parser->chunk_bytes_read == 0){
+					parser->chunk_size = 0;
+				}
+
+				if (c == ';' || c == ' '){
+					state = CHUNK_EXTENSIONS;
+					break;
+				} else if (c == '\r'){
+					state = CHUNK_SIZE_CR;
+					break;
+				} else{
+					int value = unhex[(unsigned char)c];
+					if (value == -1){
+						state = CHUNK_ERROR;
+						break;
+					}
+					parser->chunk_size = (parser->chunk_size << 4) | value;
+					//state = CHUNK_SIZE_CR;
+					break;
+				}
+
+			case CHUNK_EXTENSIONS:
+				printf("chunk extensions\n");
+				if (c == '\r'){
+					state = CHUNK_SIZE_CR;
+				} else{
+					//ignore extensions. let the characters be skipped.
+				}
+				break;
+
+			case CHUNK_SIZE_CR:
+				printf("chunk size cr\n");
+				if (c == '\n'){
+					state = CHUNK_SIZE_LF;
+					break;
+				} else{
+					state = CHUNK_ERROR;
+				}
+
+			case CHUNK_SIZE_LF:
+				printf("chunk size lf\n");
+				printf("cunk size: %zu\n", parser->chunk_size);
+
+				parser->chunk_bytes_read = 0;
+
+				if (parser->chunk_size > 0){
+					state = CHUNK_DATA;
+				} else if (parser->chunk_size == 0){
+					state = CHUNK_TRAILERS;
+				} 
+				break;
+
+			case CHUNK_DATA:
+				printf("chunk data\n");
+
+				if (parser->chunk_bytes_read == 0){
+					parser->chunk_data = &buf[i];
+				}
+
+				parser->chunk_bytes_read++;
+				if (parser->chunk_bytes_read == parser->chunk_size){
+					state = CHUNK_DATA_CR;
+				}
+
+				printf("chunk size: %zu\n", parser->chunk_size);
+				fwrite(parser->chunk_data, 1, parser->chunk_size, stdout);
+				break;
+
+			case CHUNK_DATA_CR:
+				printf("chunk data cr\n");
+				if (c != '\r'){
+					state = ERROR;
+					break;
+				}
+
+				state = CHUNK_DATA_LF;
+				break;
+				//FALLTHROUGH;
+
+			case CHUNK_DATA_LF:
+				printf("chunk data lf\n");
+				printf("%c\n", buf[i]);
+				if (c != '\n'){
+					state = ERROR;
+					break;
+				}
+
+				state = CHUNK_SIZE;
+				break;
+
+			case CHUNK_TRAILERS:
+				if (c == '\n'){
+					state = CHUNK_DONE;
+				} else{
+					//ignore trailers. let the characters be skipped.
+				}
+				break;
+
+			case CHUNK_DONE:
+				printf("chunk done\n");
+				state = DONE;
+				break;
+			case CHUNK_ERROR:
+				state = ERROR;
+				break;
 			
 			case ERROR:
 				parser->position = buf_total;
@@ -316,9 +394,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 			case DONE:
 				break;
 		}
-		printf("End of iteration %zu, state = %d\n", i, state);
 	}
-	printf("Exited loop, final state = %d\n", state);
 	parser->position = buf_total;
 	parser->state = state;
 
@@ -329,29 +405,3 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 	return PARSE_INCOMPLETE;
 }
 
-int main(void){
-    HttpRequest request = {0};
-    Parser parser = {0};
-    const char *buf =
-	    "POST /api/users HTTP/1.1\r\n"
-	    "Host: localhost\r\n"
-	    //"Content-Length: 25\r\n"
-	    "Content-Length: 44\r\n"
-	    "\r\n"
-	    //"{\"name\":\"John\", \"age\":30}";
-	    "{\"name\":\"John\", \"age\":30\", \"gender\":\"male\"}";
-
-    size_t buf_total = strlen(buf);
-    int result = parse_http_request(&request, &parser, buf, buf_total); 
-
-    printf("Result: %d\n", result);
-    printf("State: %d\n", parser.state);
-    printf("Position: %zu / %zu bytes\n", parser.position, buf_total);
-    printf("Method: %.*s\n", (int)parser.method_len, parser.method_start);
-    printf("Path: %.*s\n", (int)parser.path_len, parser.path_start);
-    printf("Body (%ld bytes): %.*s\n", parser.body_len, (int)parser.body_bytes_read, request.body);
-    printf("Buffer: [%s]\n", buf);
-    printf("Buffer length: %zu\n", strlen(buf));
-
-    return 0;
-}
