@@ -1,6 +1,6 @@
 CC = clang
 
-CFLAGS = -Wall -Werror -Wextra -Wpedantic -O0 \
+CFLAGS = -Wall -Werror -Wextra -Wpedantic -O2 \
          -g \
          -fsanitize=address,undefined \
          -fno-omit-frame-pointer

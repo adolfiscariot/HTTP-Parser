@@ -49,6 +49,7 @@
  */
 
 // The lookup table below is used to convert size in chunked encoding from hex to their numeric values
+// I stole this idea from the now deprecated node http server
 static const int8_t unhex[256] = {
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x00-0x0F
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // 0x10-0x1F
@@ -72,7 +73,7 @@ static const int8_t unhex[256] = {
 int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, size_t buf_total){ 
 	Parser_State state = parser->state;
 
-	for (size_t i = parser->position; i < buf_total; i++){
+	for (size_t i = 0; i < buf_total; i++){
 		char c = buf[i];
 
 		switch(state){
@@ -129,9 +130,13 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 					parser->version_start = &buf[i];
 				}
 
+
 				if (c == '\r'){
 					state = CR;
 					break;
+				} else if (c == '\n'){
+					state = ERROR;
+					break; 
 				} else{
 					parser->version_len++;
 					break;
@@ -160,12 +165,12 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 					// if CR re-appears after LF that means the body is next
 					i++; // skip to \n
 					if (i < buf_total && buf[i] == '\n'){
-						i++; //skip to beginning of body
+						i++; // skip to beginning of body
 
 						// Handle chunked encoding
 						if (parser->flags & F_CHUNKED){
 							state = CHUNK_SIZE;
-							i--; //Gotta do this cause the main loop increments i by the time we get to chunk size
+							i--; // Gotta do this cause the main loop increments i by the time we get to chunk size
 							break;
 						}
 
@@ -173,6 +178,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 							state = BODY;
 							request->body = &buf[i];
 							parser->line_start = &buf[i];
+							i--; // Same explanation as the one above
 							break;
 							//FALLTHROUGH;
 						} else{
@@ -262,10 +268,12 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 
 					size_t left_to_read = parser->body_len - parser->body_bytes_read;
 
-					size_t bytes_to_read = (left_in_buf >= left_to_read)? left_in_buf : left_to_read;
+					size_t bytes_to_read = (left_in_buf >= left_to_read)? left_to_read: left_in_buf;
 
 					parser->body_bytes_read += bytes_to_read;
+
 					i += bytes_to_read - 1; // -1 since we add 1 in the loop
+
 					if (parser->body_bytes_read >= parser->body_len){
 						state = DONE;
 					}
@@ -285,7 +293,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 
 				if (c == ';' || c == ' '){
 					state = CHUNK_EXTENSIONS;
-					break;
+					FALLTHROUGH;
 				} else if (c == '\r'){
 					state = CHUNK_SIZE_CR;
 					break;
@@ -329,6 +337,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				} else if (parser->chunk_size == 0){
 					state = CHUNK_TRAILERS;
 				} 
+
 				break;
 
 			case CHUNK_DATA:
@@ -340,9 +349,7 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				parser->chunk_bytes_read++;
 				if (parser->chunk_bytes_read == parser->chunk_size){
 					state = CHUNK_DATA_CR;
-					//continue;
-				}
-
+				} 
 				break;
 
 			case CHUNK_DATA_CR:
@@ -390,11 +397,14 @@ int parse_http_request(HttpRequest *request, Parser *parser, const char *buf, si
 				break;
 		}
 	}
-	parser->position = buf_total;
 	parser->state = state;
 
 	if (parser->state == DONE){
 		return PARSE_SUCCESS;
+	}
+	
+	if (parser->state == ERROR){
+		return PARSE_ERROR;
 	}
 
 	return PARSE_INCOMPLETE;
