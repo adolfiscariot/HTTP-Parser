@@ -4,7 +4,7 @@
 #include <assert.h>
 #include "../src/parser.h"
 
-void test_basic_request(){
+void test_basic_request(void){
 	const char *buf = 
 		"GET /index.html HTTP/1.1\r\n"
 		"Host: localhost\r\n"
@@ -26,7 +26,7 @@ void test_basic_request(){
 	printf("test_basic_result passed\n");
 }
 
-void test_content_length(){
+void test_content_length(void){
 	const char *buf = 
 		"POST /login.html HTTP/1.1\r\n"
 		"Host: localhost\r\n"
@@ -51,7 +51,7 @@ void test_content_length(){
 	printf("test_content_length passed\n");
 }
 
-void test_transfer_encoding(){
+void test_transfer_encoding(void){
 	const char *buf = 
 		"POST /login.html HTTP/1.1\r\n"
 		"Host: localhost\r\n"
@@ -90,7 +90,7 @@ void test_transfer_encoding(){
  * ============================================================
  */
 
-void test_empty_body(){
+void test_empty_body(void){
 	const char *buf =
 	"GET / HTTP/1.1\r\n"
 	"\r\n";
@@ -104,7 +104,7 @@ void test_empty_body(){
 	printf("test_empty_body passed\n");
 }
 
-void test_large_chunk(){
+void test_large_chunk(void){
 	const char *buf =
 	"POST / HTTP/1.1\r\n"
 	"Transfer-Encoding: chunked\r\n"
@@ -129,7 +129,7 @@ void test_large_chunk(){
  * ============================================================
  */
 
-void test_partial_input(){
+void test_partial_input(void){
 	const char *part1 =
 	"POST / HTTP/1.1\r\n"
 	"Content-Length: 5\r\n"
@@ -157,7 +157,7 @@ void test_partial_input(){
  * ============================================================
  */
 
-void test_invalid_chunk_size(){
+void test_invalid_chunk_size(void){
 	const char *buf =
 	"POST / HTTP/1.1\r\n"
 	"Transfer-Encoding: chunked\r\n"
@@ -176,7 +176,7 @@ void test_invalid_chunk_size(){
 	printf("test_invalid_chunk_size passed\n");
 }
 
-void test_missing_crlf(){
+void test_missing_crlf(void){
 	const char *buf =
 	"GET / HTTP/1.1\n";  // invalid
 
@@ -184,7 +184,6 @@ void test_missing_crlf(){
 	HttpRequest req = {0};
 
 	int r = parse_http_request(&req, &parser, buf, strlen(buf));
-	printf("%d\n", r);
 
 	assert(r == PARSE_ERROR);
 	printf("test_missing_crlf\n");
